@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>일일 재고 현황표</title>
+  <style>
+    :root{
+      --ink:#2a2a2a;
+      --bg:#f4f6f8;
+      --panel:#ffffff;
+      --line:4px;
+
+      --circle:92px;
+      --circleBorder:2px;
+
+      --gridW: 1320px; /* 가로 7칸이면 조금 넓게 */
+      --gridH: 430px;
+    }
+
+    body{ margin:0; font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif; background:var(--bg); color:#111; }
+    .container{ max-width: 1400px; margin: 18px auto; padding: 0 14px; }
+    .card{ background:var(--panel); border-radius:14px; box-shadow:0 2px 10px rgba(0,0,0,.06); padding:18px; }
+
+    .inputTitle{ text-align:center; font-weight:800; font-size:18px; margin: 4px 0 12px; }
+    textarea{
+      width:100%;
+      min-height:120px;
+      border:1px solid #d6d6d6;
+      border-radius:10px;
+      padding:12px;
+      font-size:13px;
+      line-height:1.35;
+      resize:vertical;
+      box-sizing:border-box;
+      background:#fff;
+    }
+    .btnRow{ display:flex; justify-content:center; margin-top:12px; gap:10px; flex-wrap:wrap; }
+    button{
+      background:#43a047; color:white; border:0; border-radius:8px;
+      padding:10px 22px; font-weight:800; cursor:pointer;
+      box-shadow:0 2px 0 rgba(0,0,0,.08);
+    }
+    button.secondary{ background:#546e7a; }
+    button:active{ transform: translateY(1px); }
+
+    .hint{ color:#555; font-size:12px; margin-top:8px; line-height:1.45; }
+
+    .titleTop{ text-align:center; font-weight:900; letter-spacing:.35em; font-size:44px; margin: 16px 0 10px; }
+
+    .diagramWrap{ display:flex; justify-content:center; padding: 10px 0 22px; }
+    .diagram{
+      position:relative;
+      width: min(var(--gridW), 100%);
+      height: var(--gridH);
+      margin-top: 4px;
+    }
+
+    /* 외곽 프레임 */
+    .frame{
+      position:absolute;
+      left:0; top:0; right:0; bottom:0;
+      border: var(--line) solid var(--ink);
+      border-radius:2px;
+      box-sizing:border-box;
+      background:transparent;
+    }
+
+    /* 내부 라인 */
+    .hline{
+      position:absolute; left:0; right:0;
+      height: var(--line);
+      background: var(--ink);
+      transform: translateY(calc(var(--line) / -2));
+    }
+    .vline{
+      position:absolute; top:0; bottom:0;
+      width: var(--line);
+      background: var(--ink);
+      transform: translateX(calc(var(--line) / -2));
+    }
+
+    /* 원(노드) */
+    .node{
+      position:absolute;
+      width: var(--circle);
+      height: var(--circle);
+      border: var(--circleBorder) solid var(--ink);
+      border-radius: 999px;
+      background: #fff;
+      transform: translate(-50%, -50%);
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      box-sizing:border-box;
+      text-align:center;
+      user-select:none;
+    }
+    .node .mat{ font-weight:900; color:#1a3bd6; font-size:16px; line-height:1.05; }
+    .node .qty{ font-weight:900; color:#111; font-size:18px; line-height:1.15; margin-top:3px; }
+    .node .tag{ font-weight:800; color:#8a8a8a; font-size:12px; margin-top:2px; }
+
+    /* 가운데 칸 텍스트 */
+    .cellText{
+      position:absolute;
+      transform: translate(-50%, -50%);
+      text-align:center;
+      width: 150px;
+      pointer-events:none;
+      user-select:none;
+    }
+    .cellText .mat{ font-weight:900; color:#d97a0c; font-size:14px; }
+    .cellText .qty{ font-weight:900; color:#111; font-size:18px; margin-top:2px; }
+    .cellText .tag{ font-weight:800; color:#8a8a8a; font-size:12px; margin-top:2px; }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="inputTitle">데이터 입력 (엑셀 복사/붙여넣기)</div>
+      <textarea id="paste" placeholder="예)\n장치장\t곡종\t재고량\nA101\tWUR\t1,600.000\nA201\tWUSL9.0\t146.960"></textarea>
+      <div class="hint">
+        - 기본 입력 형식: 장치장(TAB)곡종(TAB)재고량<br/>
+        - 첫 줄에 “장치장”이 포함되면 헤더로 인식하고 자동 제외합니다.<br/>
+        - 재고량은 문자열로 표시(콤마/소수점 그대로 유지)합니다.
+      </div>
+      <div class="btnRow">
+        <button id="apply">현황표 업데이트</button>
+        <button id="demo" class="secondary">데모 데이터 채우기</button>
+        <button id="clear" class="secondary">초기화</button>
+      </div>
+    </div>
+
+    <div class="titleTop">일일재고현황표</div>
+
+    <div class="diagramWrap">
+      <div class="diagram" id="diagram">
+        <div class="frame"></div>
+        <!-- 동적 생성 -->
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ===============================
+  // 1) 레이아웃: 가로 7칸 = 세로 라인 8개
+  //    - 원(대형): 7 × 3 = 21개 (교차점)
+  //    - 가운데 텍스트: 7 × 2 = 14개 (각 띠 중심)
+  // ===============================
+  const COLS = 7; // 원 가로 개수
+  const ROWS = 3; // 원 세로 개수
+
+  const diagram = document.getElementById('diagram');
+
+  function xAt(col){ // 0..6
+    return diagram.clientWidth * (col/(COLS-1));
+  }
+  function yAt(row){ // 0..2
+    return diagram.clientHeight * (row/(ROWS-1));
+  }
+
+  // 가운데 띠(2개)의 y 위치: 위/아래 띠 중심
+  function yBand(band){ // 0..1
+    return diagram.clientHeight * ((band === 0) ? 0.25 : 0.75);
+  }
+  // 가운데 텍스트 가로 7칸은 프레임을 7등분한 “칸 중심”으로 배치
+  function xCell7(i){ // 0..6
+    return diagram.clientWidth * ((i + 0.5) / 7);
+  }
+
+  function clearDynamic(){
+    [...diagram.querySelectorAll('.hline,.vline,.node,.cellText')].forEach(el => el.remove());
+  }
+
+  function drawLines(){
+    // 세로 내부 라인: 7칸이면 내부선은 1..6 (총 6개)
+    for(let c=1; c<=COLS-1; c++){
+      const v = document.createElement('div');
+      v.className = 'vline';
+      v.style.left = xAt(c) + 'px';
+      diagram.appendChild(v);
+    }
+    // 가로 내부 라인: 가운데 1개
+    const h = document.createElement('div');
+    h.className = 'hline';
+    h.style.top = yAt(1) + 'px';
+    diagram.appendChild(h);
+  }
+
+  // ===============================
+  // 2) 슬롯(코드) 매핑
+  //    필요 시 여기만 바꾸면 전체가 맞게 동작
+  // ===============================
+  const circleSlots = [
+    ["A101","A102","A103","A104","A105","A106","A107"],
+    ["A301","A302","A303","A304","A305","A306","A307"],
+    ["A501","A502","A503","A504","A505","A506","A507"],
+  ];
+
+  const cellSlots = [
+    ["A201","A202","A203","A204","A205","A206","A207"],
+    ["A401","A402","A403","A404","A405","A406","A407"],
+  ];
+
+  function makeNode(x,y,key){
+    const n = document.createElement('div');
+    n.className = 'node';
+    n.dataset.key = key;
+    n.style.left = x + 'px';
+    n.style.top  = y + 'px';
+    n.innerHTML = `
+      <div class="mat">-</div>
+      <div class="qty">-</div>
+      <div class="tag">${key}</div>
+    `;
+    diagram.appendChild(n);
+  }
+
+  function makeCellText(x,y,key){
+    const t = document.createElement('div');
+    t.className = 'cellText';
+    t.dataset.key = key;
+    t.style.left = x + 'px';
+    t.style.top  = y + 'px';
+    t.innerHTML = `
+      <div class="mat">-</div>
+      <div class="qty">-</div>
+      <div class="tag">${key}</div>
+    `;
+    diagram.appendChild(t);
+  }
+
+  function drawNodesAndCells(){
+    // 원 21개
+    for(let r=0; r<ROWS; r++){
+      for(let c=0; c<COLS; c++){
+        makeNode(xAt(c), yAt(r), circleSlots[r][c]);
+      }
+    }
+    // 가운데 텍스트 14개 (7×2)
+    for(let b=0; b<2; b++){
+      for(let i=0; i<7; i++){
+        makeCellText(xCell7(i), yBand(b), cellSlots[b][i]);
+      }
+    }
+  }
+
+  function renderAll(){
+    clearDynamic();
+    drawLines();
+    drawNodesAndCells();
+    applyDataFromTextarea(); // 리사이즈 시에도 유지
+  }
+  window.addEventListener('resize', renderAll);
+
+  // ===============================
+  // 3) 엑셀 복붙 파싱 & 적용
+  // ===============================
+  function parseTSV(text){
+    const lines = text.replace(/\r/g,'').split('\n').filter(l => l.trim().length>0);
+    const rows = lines.map(l => l.split('\t').map(x => x.trim()));
+
+    // 헤더 제거
+    if(rows[0] && rows[0][0] && rows[0][0].includes('장치장')) return rows.slice(1);
+    return rows;
+  }
+
+  function applyData(rows){
+    const map = new Map();
+    rows.forEach(r => {
+      const code = (r[0]||'').trim();
+      const mat  = (r[1]||'').trim();
+      const qty  = (r[2]||'').trim();
+      if(code) map.set(code, {mat, qty});
+    });
+
+    [...diagram.querySelectorAll('.node,.cellText')].forEach(el => {
+      const key = el.dataset.key;
+      const v = map.get(key);
+      const matEl = el.querySelector('.mat');
+      const qtyEl = el.querySelector('.qty');
+
+      if(v){
+        matEl.textContent = v.mat || '-';
+        qtyEl.textContent = v.qty || '-';
+      }else{
+        matEl.textContent = '-';
+        qtyEl.textContent = '-';
+      }
+    });
+  }
+
+  function applyDataFromTextarea(){
+    const ta = document.getElementById('paste');
+    const rows = parseTSV(ta.value);
+    applyData(rows);
+  }
+
+  document.getElementById('apply').addEventListener('click', applyDataFromTextarea);
+
+  // 데모/초기화
+  document.getElementById('demo').addEventListener('click', () => {
+    const demo =
+`장치장\t곡종\t재고량
+A101\tWUR\t1,600.000
+A102\tWCRS\t1,700.557
+A103\tWASW\t1,360.392
+A104\tWASWP\t1,403.039
+A105\tWUR\t1,700.915
+A106\tWNS\t1,637.684
+A107\tWUR\t1,555.000
+A201\tWUSL9.0\t146.960
+A202\tWUSH\t420.000
+A203\tWUR\t420.679
+A204\tWUR\t420.233
+A205\tWUSH\t420.000
+A206\tWUSL9.0\t419.860
+A207\tWUR\t158.126
+A301\tWUSH\t864.386
+A302\tWUSH\t1,695.227
+A303\tWUSH\t1,671.185
+A304\tWUSH\t1,690.285
+A305\tWNS\t1,697.176
+A306\tWUR\t1,701.166
+A307\tWNS\t1,600.000
+A401\tWCRS\t170.000
+A402\tWUSH\t410.000
+A403\tWUSH\t0.000
+A404\tWNS\t419.287
+A405\tWUSH\t0.000
+A406\tWUSH\t0.000
+A407\tWNS\t170.000
+A501\tWUSH\t1,557.437
+A502\tWNS\t1,703.834
+A503\tWUSH\t1,645.290
+A504\tWCRS\t956.294
+A505\tWASWP\t1,696.740
+A506\tWUR\t1,700.906
+A507\tWUR\t1,650.000`;
+    document.getElementById('paste').value = demo;
+    applyDataFromTextarea();
+  });
+
+  document.getElementById('clear').addEventListener('click', () => {
+    document.getElementById('paste').value = '';
+    applyDataFromTextarea();
+  });
+
+  // 초기 렌더
+  renderAll();
+</script>
+</body>
+</html>
